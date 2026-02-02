@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IStringDictionary, INumberDictionary } from '../../../../base/common/collections.js';
+import { INumberDictionary } from '../../../../base/common/collections.js';
 import { URI } from '../../../../base/common/uri.js';
 import { Event, Emitter } from '../../../../base/common/event.js';
 import { IDisposable, DisposableStore, Disposable } from '../../../../base/common/lifecycle.js';
@@ -43,7 +43,6 @@ export abstract class AbstractProblemCollector extends Disposable implements IDi
 	private _maxMarkerSeverity?: MarkerSeverity;
 	private buffer: string[];
 	private bufferLength: number;
-	private openModels: IStringDictionary<boolean>;
 	protected readonly modelListeners = new DisposableStore();
 	private tail: Promise<void> | undefined;
 
@@ -90,17 +89,9 @@ export abstract class AbstractProblemCollector extends Disposable implements IDi
 		for (const problemMatcher of problemMatchers) {
 			this.matchersOwners.add(problemMatcher.owner);
 		}
-		this.openModels = Object.create(null);
 		this.resourcesToClean = new Map<string, Map<string, URI>>();
 		this.markers = new Map<string, Map<string, Map<string, IMarkerData>>>();
 		this.deliveredMarkers = new Map<string, Map<string, number>>();
-		this._register(this.modelService.onModelAdded((model) => {
-			this.openModels[model.uri.toString()] = true;
-		}, this, this.modelListeners));
-		this._register(this.modelService.onModelRemoved((model) => {
-			delete this.openModels[model.uri.toString()];
-		}, this, this.modelListeners));
-		this.modelService.getModels().forEach(model => this.openModels[model.uri.toString()] = true);
 
 		this._onDidStateChange = new Emitter();
 	}
@@ -400,34 +391,6 @@ export class WatchingProblemCollector extends AbstractProblemCollector implement
 				this.beginPatterns.push(matcher.watching.beginsPattern.regexp);
 			}
 		});
-
-		this.modelListeners.add(this.modelService.onModelRemoved(modelEvent => {
-			let markerChanged: IDisposable | undefined = Event.debounce(
-				this.markerService.onMarkerChanged,
-				(last: readonly URI[] | undefined, e: readonly URI[]) => (last ?? []).concat(e),
-				500,
-				false,
-				true
-			)(async (markerEvent: readonly URI[]) => {
-				if (!markerEvent || !markerEvent.includes(modelEvent.uri) || (this.markerService.read({ resource: modelEvent.uri }).length !== 0)) {
-					return;
-				}
-				const oldLines = Array.from(this.lines);
-				for (const line of oldLines) {
-					await this.processLineInternal(line);
-				}
-			});
-
-			this._register(markerChanged); // Ensures markerChanged is tracked and disposed of properly
-
-			setTimeout(() => {
-				if (markerChanged) {
-					const _markerChanged = markerChanged;
-					markerChanged = undefined;
-					_markerChanged.dispose();
-				}
-			}, 600);
-		}));
 	}
 
 	public aboutToStart(): void {

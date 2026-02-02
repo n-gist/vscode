@@ -158,6 +158,8 @@ export class MarkerService implements IMarkerService {
 	readonly onMarkerChanged = this._onMarkerChanged.event;
 
 	private readonly _data = new DoubleResourceMap<IMarker[]>();
+	private readonly _dataBackyard = new DoubleResourceMap<IMarker[]>();
+	private readonly _activeOrigins = new DoubleResourceMap<string>();
 	private readonly _stats = new MarkerStats(this);
 	private readonly _filteredResources = new ResourceMap<string[]>();
 
@@ -176,17 +178,35 @@ export class MarkerService implements IMarkerService {
 		}
 	}
 
-	changeOne(owner: string, resource: URI, markerData: IMarkerData[]): void {
-
-		if (isFalsyOrEmpty(markerData)) {
+	changeOne(owner: string, resource: URI, markerData: IMarkerData[] | null): void {
+		const activeOrigin = this._activeOrigins.get(resource, owner);
+		if (markerData === null) {
+			console.log(`COnull for ${owner}, ${resource.path}`);
+			if (activeOrigin !== undefined) {
+				console.log(`COnull> release active origin from ${activeOrigin} of ${owner}, ${resource.path}`);
+				// release resource from being active by origin (temp, this needs more careful releasing,
+				// origin should be passed as argument to prevent different origins from being able to
+				// deactivate current without reason, or from clearing foreign origin's markers)
+				// this also needs a check if there is another origin exists in backyard,
+				// and proclaim it the new active origin then, this may include origins prioritization hierarchy
+				// in the future
+				this._activeOrigins.delete(resource, owner);
+				const movedFromBackyard = this._dataBackyard.get(resource, owner);
+				if (movedFromBackyard !== undefined) {
+					this._data.set(resource, owner, movedFromBackyard);
+					this._dataBackyard.delete(resource, owner);
+					this._onMarkerChanged.fire([resource]);
+					return;
+				}
+			} else {
+				console.log(`COnull> has no active origin of ${owner}, ${resource.path}`);
+			}
 			// remove marker for this (owner,resource)-tuple
 			const removed = this._data.delete(resource, owner);
 			if (removed) {
 				this._onMarkerChanged.fire([resource]);
 			}
-
 		} else {
-			// insert marker for this (owner,resource)-tuple
 			const markers: IMarker[] = [];
 			for (const data of markerData) {
 				const marker = MarkerService._toMarker(owner, resource, data);
@@ -194,7 +214,52 @@ export class MarkerService implements IMarkerService {
 					markers.push(marker);
 				}
 			}
-			this._data.set(resource, owner, markers);
+
+			if (activeOrigin !== undefined) {
+				// resource for this owner is active by origin
+				console.log(`CO: resource active by ${activeOrigin} of ${owner}, ${resource.path}`);
+				this.changeWithActive(owner, resource, activeOrigin, markers);
+			} else {
+				// check if any marker has origin, which is treaten as activation claim (temp solution)
+				for (const marker of markers) {
+					if (marker.origin !== undefined) {
+						const activeOrigin = marker.origin;
+						console.log(`CO: make origin active ${activeOrigin} of ${owner}, ${resource.path}`);
+						this._activeOrigins.set(resource, owner, activeOrigin);
+						const movedToBackyard = this._data.get(resource, owner);
+						if (movedToBackyard !== undefined) {
+							this._dataBackyard.set(resource, owner, movedToBackyard);
+							this._data.delete(resource, owner);
+						}
+						this.changeWithActive(owner, resource, activeOrigin, markers, movedToBackyard !== undefined);
+						return;
+					}
+				}
+				console.log(`CO: not active ${owner}, ${resource.path}`);
+				this._data.set(resource, owner, markers);
+				this._onMarkerChanged.fire([resource]);
+			}
+		}
+	}
+
+	private changeWithActive(owner: string, resource: URI, activeOrigin: string, markers: IMarker[], forceChanged = false) {
+		// put markers originated not from activeOrigin to backyard storage
+		const facadeMarkers: IMarker[] = [];
+		const backyardMarkers: IMarker[] = [];
+		for (const marker of markers) {
+			if (marker.origin === activeOrigin) {
+				facadeMarkers.push(marker);
+			} else {
+				backyardMarkers.push(marker);
+			}
+		}
+		if (backyardMarkers.length > 0) {
+			this._dataBackyard.set(resource, owner, backyardMarkers);
+		}
+		if (facadeMarkers.length > 0) {
+			this._data.set(resource, owner, facadeMarkers);
+		}
+		if (forceChanged || facadeMarkers.length > 0) {
 			this._onMarkerChanged.fire([resource]);
 		}
 	}
