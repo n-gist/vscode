@@ -16,6 +16,8 @@ import { Disposable } from '../utils/dispose';
 import { ResourceMap } from '../utils/resourceMap';
 import { API } from './api';
 import type * as Proto from './protocol/protocol';
+import { immediateReplace } from '../testSwitcher';
+import { onAllTabsCloseTextUri, onTabOpenNewTextDocument } from '../utils/getOpenUris';
 
 type ScriptKind = 'TS' | 'TSX' | 'JS' | 'JSX';
 
@@ -528,8 +530,26 @@ export default class BufferSyncSupport extends Disposable {
 			return;
 		}
 		this.listening = true;
-		vscode.workspace.onDidOpenTextDocument(this.openTextDocument, this, this._disposables);
-		vscode.workspace.onDidCloseTextDocument(this.onDidCloseTextDocument, this, this._disposables);
+		if (!immediateReplace) {
+			vscode.workspace.onDidOpenTextDocument(this.openTextDocument, this, this._disposables);
+			vscode.workspace.onDidCloseTextDocument(this.onDidCloseTextDocument, this, this._disposables);
+		} else {
+			// console.log('immediateReplace code listen');
+			vscode.window.tabGroups.onDidChangeTabs(
+				onTabOpenNewTextDocument(document => {
+					// console.log(`openNewTextDocument ${document.uri.path}`);
+					this.openTextDocument(document);
+				}),
+				this, this._disposables
+			);
+			vscode.window.tabGroups.onDidChangeTabs(
+				onAllTabsCloseTextUri(uri => {
+					// console.log(`closeTextUri ${uri.path}`);
+					this.closeResource(uri);
+				}),
+				this, this._disposables
+			);
+		}
 		vscode.workspace.onDidChangeTextDocument(this.onDidChangeTextDocument, this, this._disposables);
 		vscode.window.onDidChangeVisibleTextEditors(e => {
 			for (const { document } of e) {

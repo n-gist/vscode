@@ -11,6 +11,8 @@ import * as typeConverters from '../typeConverters';
 import { ITypeScriptServiceClient } from '../typescriptService';
 import { Disposable } from '../utils/dispose';
 import { Condition, conditionalRegistration } from './util/dependentRegistration';
+import { immediateReplace } from '../testSwitcher';
+import { onTabOpenNewTextDocument } from '../utils/getOpenUris';
 
 class TagClosing extends Disposable {
 
@@ -152,10 +154,21 @@ function requireActiveDocumentSetting(
 			return !!vscode.workspace.getConfiguration(language.id, editor.document).get('autoClosingTags');
 		},
 		handler => {
-			return vscode.Disposable.from(
-				vscode.window.onDidChangeActiveTextEditor(handler),
-				vscode.workspace.onDidOpenTextDocument(handler),
-				vscode.workspace.onDidChangeConfiguration(handler));
+			if (!immediateReplace) {
+				return vscode.Disposable.from(
+					vscode.window.onDidChangeActiveTextEditor(handler),
+					vscode.workspace.onDidOpenTextDocument(handler),
+					vscode.workspace.onDidChangeConfiguration(handler));
+			} else {
+				return vscode.Disposable.from(
+					vscode.window.onDidChangeActiveTextEditor(handler),
+					vscode.window.tabGroups.onDidChangeTabs(
+						onTabOpenNewTextDocument(() => {
+							handler();
+						})
+					),
+					vscode.workspace.onDidChangeConfiguration(handler));
+			}
 		});
 }
 
