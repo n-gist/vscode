@@ -19,6 +19,8 @@ import { standardLanguageDescriptions, isJsConfigOrTsConfigFileName } from './co
 import { Lazy } from './utils/lazy';
 import { Logger } from './logging/logger';
 import { PluginManager } from './tsServer/plugins';
+import { testSwitchUseTabGroupsEvents } from './testSwitcher';
+import { onTabsOpenTextDocument } from './utils/tabGroupsOpenCloseTextDocument';
 
 export function createLazyClientHost(
 	context: vscode.ExtensionContext,
@@ -79,11 +81,22 @@ export function lazilyActivateClient(
 
 	const didActivate = vscode.workspace.textDocuments.some(maybeActivate);
 	if (!didActivate) {
-		const openListener = vscode.workspace.onDidOpenTextDocument(doc => {
-			if (maybeActivate(doc)) {
-				openListener.dispose();
-			}
-		}, undefined, disposables);
+		if (!testSwitchUseTabGroupsEvents) {
+			const openListener = vscode.workspace.onDidOpenTextDocument(doc => {
+				if (maybeActivate(doc)) {
+					openListener.dispose();
+				}
+			}, undefined, disposables);
+		} else {
+			const openListener = vscode.window.tabGroups.onDidChangeTabs(
+				onTabsOpenTextDocument(doc => {
+					if (maybeActivate(doc)) {
+						openListener.dispose();
+					}
+				}),
+				undefined, disposables
+			);
+		}
 	}
 
 	return new vscode.Disposable(() => {

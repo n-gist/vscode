@@ -14,6 +14,8 @@ import { readUnifiedConfig } from '../utils/configuration';
 import { Disposable } from '../utils/dispose';
 import { equals } from '../utils/objects';
 import { ResourceMap } from '../utils/resourceMap';
+import { testSwitchUseTabGroupsEvents } from '../testSwitcher';
+import { onTabsCloseTextDocument } from '../utils/tabGroupsOpenCloseTextDocument';
 
 interface FileConfiguration {
 	readonly formatOptions: Proto.FormatCodeSettings;
@@ -40,13 +42,27 @@ export default class FileConfigurationManager extends Disposable {
 	) {
 		super();
 		this.formatOptions = new ResourceMap(undefined, { onCaseInsensitiveFileSystem });
-		vscode.workspace.onDidCloseTextDocument(textDocument => {
-			// When a document gets closed delete the cached formatting options.
-			// This is necessary since the tsserver now closed a project when its
-			// last file in it closes which drops the stored formatting options
-			// as well.
-			this.formatOptions.delete(textDocument.uri);
-		}, undefined, this._disposables);
+		if (!testSwitchUseTabGroupsEvents) {
+			vscode.workspace.onDidCloseTextDocument(textDocument => {
+				// When a document gets closed delete the cached formatting options.
+				// This is necessary since the tsserver now closed a project when its
+				// last file in it closes which drops the stored formatting options
+				// as well.
+				this.formatOptions.delete(textDocument.uri);
+			}, undefined, this._disposables);
+		} else {
+			vscode.window.tabGroups.onDidChangeTabs(
+				onTabsCloseTextDocument(uri => {
+					// When a document gets closed delete the cached formatting options.
+					// This is necessary since the tsserver now closed a project when its
+					// last file in it closes which drops the stored formatting options
+					// as well.
+					// console.log(`formatOptions delete ${uri.path}`);
+					this.formatOptions.delete(uri);
+				}),
+				this, this._disposables
+			);
+		}
 	}
 
 	public async ensureConfigurationForDocument(
